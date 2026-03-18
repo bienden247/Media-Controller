@@ -2,6 +2,7 @@
 
 ⚠️ LƯU Ý KHI CÀI ĐẶT (PLAY PROTECT):
 Vì đây là dự án mã nguồn mở (không tải từ CH Play), nên khi cài đặt Google Play Protect có thể hiện cảnh báo đỏ "Ứng dụng lạ". Anh em cứ yên tâm bấm vào chữ "Chi tiết khác" (More details) -> Chọn "Vẫn cài đặt" (Install anyway) hoặc anh em tắt hản Play Protect luôn nhé. Mình đang gửi form xin được duyệt app nên nếu may mắn vài hôm nữa có thể anh em sẽ bỏ qua luôn cảnh báo này cũng được :))))
+
 Mã nguồn mở 100% công khai và không yêu cầu quyền Internet, anh em có thể tự kiểm chứng!
 
 Hướng dẫn cài đặt:
