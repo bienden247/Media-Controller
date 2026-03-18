@@ -1,5 +1,9 @@
 Ứng dụng hỗ trợ lái xe điều khiển Youtube qua Android Auto bằng phím trên vô lăng
 
+⚠️ LƯU Ý KHI CÀI ĐẶT (PLAY PROTECT):
+Vì đây là dự án mã nguồn mở (không tải từ CH Play), nên khi cài đặt Google Play Protect có thể hiện cảnh báo đỏ "Ứng dụng lạ". Anh em cứ yên tâm bấm vào chữ "Chi tiết khác" (More details) -> Chọn "Vẫn cài đặt" (Install anyway) hoặc anh em tắt hản Play Protect luôn nhé.
+Mã nguồn mở 100% công khai và không yêu cầu quyền Internet, anh em có thể tự kiểm chứng!
+
 Hướng dẫn cài đặt:
 
 -Tải APK về cài đặt và cấp quyền 1 lần duy nhất (Vì app này sẽ theo dõi thông báo của trình phát để điều khiển nên app sẽ yêu cầu cấp quyền truy cập thông báo nhưng yên tâm App này mình không cấp quyền Internet nên sẽ không lo bị đánh cắp dữ liệu)
