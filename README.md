@@ -1,7 +1,11 @@
 Ứng dụng hỗ trợ lái xe điều khiển Youtube qua Android Auto bằng phím trên vô lăng
+
 Hướng dẫn cài đặt:
--Tải APK về cài đặt và cấp quyền 1 lần duy nhất(Vì app này sẽ theo dõi thông báo của trình phát để điều khiển nên app sẽ yêu cầu cấp quyền truy cập thông báo nhưng yên tâm App này mình không cấp quyền Internet nên sẽ không lo bị đánh cắp dữ liệu)
+
+-Tải APK về cài đặt và cấp quyền 1 lần duy nhất (Vì app này sẽ theo dõi thông báo của trình phát để điều khiển nên app sẽ yêu cầu cấp quyền truy cập thông báo nhưng yên tâm App này mình không cấp quyền Internet nên sẽ không lo bị đánh cắp dữ liệu)
+
 -Kết nối Android Auto và bật Youtube để tận hưởng
+
 Screenshot:
 <img width="428" height="951" alt="image" src="https://github.com/user-attachments/assets/4860d057-16d6-4579-a775-0332f95d748e" />
 <img width="832" height="528" alt="image" src="https://github.com/user-attachments/assets/308a7214-fd05-4e26-9566-8947afbafa25" />
