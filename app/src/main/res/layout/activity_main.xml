@@ -20,6 +20,20 @@
         android:layout_height="wrap_content"
         android:text="CẤP QUYỀN TRUY CẬP"
         android:layout_marginBottom="32dp"/>
+    
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Để tránh bị hệ thống đóng băng app khi tắt màn hình hoặc chuyển đổi app (Chỉ máy Trung Quốc như Xiaomi, Oppo,...)"
+        android:textAlignment="center"
+        android:layout_marginBottom="8dp" />
+
+    <Button
+        android:id="@+id/btnBatteryOpt"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="TẮT TỐI ƯU HÓA PIN"
+        android:layout_marginBottom="32dp"/>
 
     <TextView
         android:layout_width="wrap_content"

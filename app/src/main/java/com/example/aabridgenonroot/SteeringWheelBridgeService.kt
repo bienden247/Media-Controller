@@ -3,10 +3,6 @@ package com.khanhtran.aamediabridgenonroot
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.media.AudioManager
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
@@ -15,274 +11,188 @@ import android.os.Handler
 import android.os.Looper
 import android.support.v4.media.MediaBrowserCompat
 import android.support.v4.media.MediaDescriptionCompat
-import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import android.view.KeyEvent
 import androidx.media.MediaBrowserServiceCompat
+
 
 class SteeringWheelBridgeService : MediaBrowserServiceCompat() {
 
     private lateinit var mediaSession: MediaSessionCompat
     private var trackedController: MediaController? = null
 
-    private val handler = Handler(Looper.getMainLooper())
-    private var revertRunnable: Runnable? = null
+    // Biến tự nhớ trạng thái lặp lại
+    private var myInternalRepeatMode = PlaybackStateCompat.REPEAT_MODE_NONE
 
-    // 🛡️ LÁ CHẮN BẢO VỆ MÃ QR: Ngăn chặn các app khác chèn ép
-    private var isShowingDonate = false
-
-    // ❤️ NHỊP TIM: Tự động cập nhật dữ liệu mỗi 2 giây (Chống bệnh ngủ đông)
-    private val heartbeatRunnable = object : Runnable {
+    // Điệp viên theo dõi YouTube
+    private val watchdogHandler = Handler(Looper.getMainLooper())
+    private val watchdogRunnable = object : Runnable {
         override fun run() {
-            if (!isShowingDonate) {
-                forceSyncData()
+            if (myInternalRepeatMode == PlaybackStateCompat.REPEAT_MODE_ONE) {
+                trackedController?.let { controller ->
+                    val metadata = controller.metadata
+                    val state = controller.playbackState
+
+                    if (metadata != null && state != null && state.state == PlaybackState.STATE_PLAYING) {
+                        val duration = metadata.getLong(android.media.MediaMetadata.METADATA_KEY_DURATION)
+                        val timeDelta = android.os.SystemClock.elapsedRealtime() - state.lastPositionUpdateTime
+                        val currentPosition = state.position + (timeDelta * state.playbackSpeed).toLong()
+
+                        if (duration > 0 && currentPosition >= duration - 1500L) {
+                            controller.transportControls?.seekTo(0)
+                            controller.transportControls?.play()
+                        }
+                    }
+                }
             }
-            handler.postDelayed(this, 1000)
+            watchdogHandler.postDelayed(this, 1000)
         }
     }
 
-    // ĐIỆP VIÊN LẮNG NGHE TÍN HIỆU
     private val controllerCallback = object : MediaController.Callback() {
         override fun onPlaybackStateChanged(state: PlaybackState?) {
-            super.onPlaybackStateChanged(state)
-            if (isShowingDonate) return // Đang hiện QR thì cấm cập nhật nhạc
-            forceSyncData()
+            syncPlaybackState(state)
         }
-
         override fun onMetadataChanged(metadata: android.media.MediaMetadata?) {
-            super.onMetadataChanged(metadata)
-            if (isShowingDonate) return // Đang hiện QR thì cấm cập nhật nhạc
-            trackedController?.let { updateDisplayTitle(it) }
+            updateDisplayTitle(trackedController)
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        mediaSession = MediaSessionCompat(this, "SteeringWheelBridge")
+        sessionToken = mediaSession.sessionToken
+        mediaSession.setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS)
 
-        mediaSession = MediaSessionCompat(this, "AABridgeSession").apply {
-            isActive = true
-            setCallback(object : MediaSessionCompat.Callback() {
-                override fun onPlay() { sendMediaKey(KeyEvent.KEYCODE_MEDIA_PLAY) }
-                override fun onPause() { sendMediaKey(KeyEvent.KEYCODE_MEDIA_PAUSE) }
-                override fun onSkipToNext() { sendMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT) }
-                override fun onSkipToPrevious() { sendMediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS) }
-                override fun onSeekTo(pos: Long) { trackedController?.transportControls?.seekTo(pos) }
+        mediaSession.setCallback(object : MediaSessionCompat.Callback() {
+            override fun onPlay() { sendMediaKey(KeyEvent.KEYCODE_MEDIA_PLAY) }
+            override fun onPause() { sendMediaKey(KeyEvent.KEYCODE_MEDIA_PAUSE) }
+            override fun onSkipToNext() { sendMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT) }
+            override fun onSkipToPrevious() { sendMediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS) }
+            override fun onSeekTo(pos: Long) { trackedController?.transportControls?.seekTo(pos) }
 
-                override fun onPlayFromMediaId(mediaId: String?, extras: Bundle?) {
-                    if (mediaId == "action_donate") {
-                        showDonateScreen()
-                    } else if (mediaId != null && mediaId.startsWith("switch_media_")) {
-                        // KHI TÀI XẾ BẤM CHUYỂN MEDIA
-                        val targetPackage = mediaId.removePrefix("switch_media_")
-                        try {
-                            val mediaSessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
-                            val component = ComponentName(this@SteeringWheelBridgeService, MediaNotificationListener::class.java)
-                            val controllers = mediaSessionManager.getActiveSessions(component)
+            override fun onFastForward() {
+                trackedController?.let { controller ->
+                    val currentPos = controller.playbackState?.position ?: 0L
+                    controller.transportControls?.seekTo(currentPos + 10000L)
+                }
+            }
 
-                            // Tìm chính xác bộ điều khiển của app được chọn
-                            val targetController = controllers.find { it.packageName == targetPackage }
-                            if (targetController != null) {
-                                // 1. Chuyển quyền theo dõi
-                                trackedController?.unregisterCallback(controllerCallback)
-                                trackedController = targetController
-                                trackedController?.registerCallback(controllerCallback)
+            override fun onRewind() {
+                trackedController?.let { controller ->
+                    val currentPos = controller.playbackState?.position ?: 0L
+                    val newPos = if (currentPos > 10000L) currentPos - 10000L else 0L
+                    controller.transportControls?.seekTo(newPos)
+                }
+            }
 
-                                // 2. Cập nhật giao diện màn hình chính
-                                syncPlaybackState(targetController.playbackState)
-                                updateDisplayTitle(targetController)
-
-                                // 3. CÚ CHỐT: Ra lệnh PLAY ngay lập tức để app mới cướp âm thanh
-                                targetController.transportControls?.play()
+            override fun onCustomAction(action: String?, extras: Bundle?) {
+                trackedController?.let { controller ->
+                    val currentPos = controller.playbackState?.position ?: 0L
+                    when (action) {
+                        "ACTION_FORWARD_10" -> {
+                            controller.transportControls?.seekTo(currentPos + 10000L)
+                        }
+                        "ACTION_REWIND_10" -> {
+                            val newPos = if (currentPos > 10000L) currentPos - 10000L else 0L
+                            controller.transportControls?.seekTo(newPos)
+                        }
+                        "ACTION_TOGGLE_REPEAT" -> {
+                            myInternalRepeatMode = when (myInternalRepeatMode) {
+                                PlaybackStateCompat.REPEAT_MODE_NONE -> PlaybackStateCompat.REPEAT_MODE_ALL
+                                PlaybackStateCompat.REPEAT_MODE_ALL -> PlaybackStateCompat.REPEAT_MODE_ONE
+                                else -> PlaybackStateCompat.REPEAT_MODE_NONE
                             }
-                        } catch (e: SecurityException) {
-                            e.printStackTrace()
+
+                            try {
+                                val compatToken = android.support.v4.media.session.MediaSessionCompat.Token.fromToken(controller.sessionToken)
+                                val compatController = android.support.v4.media.session.MediaControllerCompat(this@SteeringWheelBridgeService, compatToken)
+                                compatController.transportControls.setRepeatMode(myInternalRepeatMode)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+
+                            syncPlaybackState(controller.playbackState)
                         }
                     }
                 }
-            })
-        }
-        sessionToken = mediaSession.sessionToken
+            }
 
-        // Khởi động Nhịp tim
-        handler.post(heartbeatRunnable)
-    }
+            override fun onPlayFromMediaId(mediaId: String?, extras: Bundle?) {
+                if (mediaId == "action_donate") {
+                    // 1. TẠO BÀI HÁT GIẢ VỚI ẢNH BÌA LÀ MÃ QR
+                    val qrBitmap = android.graphics.BitmapFactory.decodeResource(resources, R.drawable.qr_donate)
+                    val donateMetadata = android.support.v4.media.MediaMetadataCompat.Builder()
+                        .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_TITLE, "☕ Cảm ơn bạn đã ủng hộ!")
+                        .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ARTIST, "Màn hình sẽ tự đóng sau 15s")
+                        .putBitmap(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ALBUM_ART, qrBitmap)
+                        .build()
 
-    // HÀM ÉP HỆ THỐNG QUÉT LẠI DỮ LIỆU TỨC THỜI
-    private fun forceSyncData() {
-        try {
-            val mediaSessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
-            val component = ComponentName(this, MediaNotificationListener::class.java)
-            val controllers = mediaSessionManager.getActiveSessions(component)
-            findAndTrackActiveController(controllers)
-        } catch (e: SecurityException) {
-            e.printStackTrace()
-        }
-    }
+                    // 2. ÉP ANDROID AUTO HIỂN THỊ TRÌNH PHÁT NHẠC
+                    mediaSession.setMetadata(donateMetadata)
+                    val donateState = android.support.v4.media.session.PlaybackStateCompat.Builder()
+                        .setState(android.support.v4.media.session.PlaybackStateCompat.STATE_PLAYING, 0, 1f)
+                        .build()
+                    mediaSession.setPlaybackState(donateState)
 
-    private fun findAndTrackActiveController(controllers: List<MediaController>?) {
-        if (controllers == null || isShowingDonate) return
-        var target: MediaController? = null
+                    // 3. ĐẾM NGƯỢC 10 GIÂY RỒI TỰ ĐỘNG THU HỒI
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        trackedController?.let { controller ->
+                            updateDisplayTitle(controller)
+                            syncPlaybackState(controller.playbackState)
+                        } ?: run {
+                            val emptyState = android.support.v4.media.session.PlaybackStateCompat.Builder()
+                                .setState(android.support.v4.media.session.PlaybackStateCompat.STATE_PAUSED, 0, 0f).build()
+                            mediaSession.setPlaybackState(emptyState)
+                        }
+                    }, 15000)
 
-        val prefs = getSharedPreferences("AppConfig", Context.MODE_PRIVATE)
-        val allowedApps = prefs.getStringSet("allowed_apps", setOf()) ?: setOf()
+                } else if (mediaId != null && mediaId.startsWith("switch_media_")) {
+                    val targetPackage = mediaId.removePrefix("switch_media_")
+                    try {
+                        val mediaSessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
+                        val component = ComponentName(this@SteeringWheelBridgeService, MediaNotificationListener::class.java)
+                        val controllers = mediaSessionManager.getActiveSessions(component)
 
-        for (controller in controllers) {
-            val pkgName = controller.packageName
-            if (pkgName != packageName && allowedApps.contains(pkgName)) {
-                if (controller.playbackState?.state == PlaybackState.STATE_PLAYING) {
-                    target = controller
-                    break
+                        val targetController = controllers.find { it.packageName == targetPackage }
+                        if (targetController != null) {
+                            trackedController?.unregisterCallback(controllerCallback)
+                            trackedController = targetController
+                            trackedController?.registerCallback(controllerCallback)
+
+                            syncPlaybackState(targetController.playbackState)
+                            updateDisplayTitle(targetController)
+
+                            val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
+                            if (launchIntent != null) {
+                                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                startActivity(launchIntent)
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    targetController.transportControls?.play()
+                                }, 500)
+                            } else {
+                                targetController.transportControls?.play()
+                            }
+
+                            notifyChildrenChanged("folder_media_switch")
+                        }
+                    } catch (e: SecurityException) {
+                        e.printStackTrace()
+                    }
                 }
             }
-        }
+        })
 
-        if (target == null) {
-            for (controller in controllers) {
-                val pkgName = controller.packageName
-                if (pkgName != packageName && allowedApps.contains(pkgName)) {
-                    target = controller
-                    break
-                }
-            }
-        }
-
-        if (target != null) {
-            if (trackedController?.sessionToken != target.sessionToken) {
-                trackedController?.unregisterCallback(controllerCallback)
-                trackedController = target
-                trackedController?.registerCallback(controllerCallback)
-            }
-            syncPlaybackState(target.playbackState)
-            updateDisplayTitle(target)
-        } else {
-            // KHÔNG CÓ NHẠC: Ném phao cứu sinh lên màn hình để chống treo
-            trackedController?.unregisterCallback(controllerCallback)
-            trackedController = null
-
-            val pauseState = PlaybackStateCompat.Builder()
-                .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE)
-                .setState(PlaybackStateCompat.STATE_PAUSED, 0, 1.0f)
-                .build()
-            mediaSession.setPlaybackState(pauseState)
-
-            val emptyMetadata = MediaMetadataCompat.Builder()
-                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, "Sẵn sàng")
-                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Vui lòng mở app")
-                .build()
-            mediaSession.setMetadata(emptyMetadata)
-        }
+        watchdogHandler.postDelayed(watchdogRunnable, 1000)
     }
 
-    private fun syncPlaybackState(targetState: PlaybackState?) {
-        if (targetState == null) return
-        val position = targetState.position
-        val speed = targetState.playbackSpeed
-        val compatState = when (targetState.state) {
-            PlaybackState.STATE_PLAYING -> {
-                mediaSession.isActive = true
-                PlaybackStateCompat.STATE_PLAYING
-            }
-            PlaybackState.STATE_PAUSED -> PlaybackStateCompat.STATE_PAUSED
-            else -> PlaybackStateCompat.STATE_PLAYING
-        }
-        val playbackState = PlaybackStateCompat.Builder()
-            .setActions(
-                PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
-                        PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
-                        PlaybackStateCompat.ACTION_SEEK_TO
-            )
-            .setState(compatState, position, speed)
-            .build()
-        mediaSession.setPlaybackState(playbackState)
-    }
-
-    private fun sendMediaKey(keyCode: Int) {
-        if (trackedController != null) {
-            val downEvent = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
-            val upEvent = KeyEvent(KeyEvent.ACTION_UP, keyCode)
-            trackedController!!.dispatchMediaButtonEvent(downEvent)
-            trackedController!!.dispatchMediaButtonEvent(upEvent)
-        } else {
-            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
-            audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
-        }
-    }
-
-    private fun updateDisplayTitle(targetController: MediaController) {
-        val targetPackageName = targetController.packageName
-        val appName = try {
-            val pm = packageManager
-            val applicationInfo = pm.getApplicationInfo(targetPackageName, PackageManager.GET_META_DATA)
-            pm.getApplicationLabel(applicationInfo).toString()
-        } catch (e: PackageManager.NameNotFoundException) {
-            "Ứng dụng ($targetPackageName)"
-        }
-
-        val metadata = targetController.metadata
-        val songTitle = metadata?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE)
-        val songArtist = metadata?.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST)
-        var albumArt: Bitmap? = metadata?.getBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART)
-        if (albumArt == null) {
-            albumArt = metadata?.getBitmap(android.media.MediaMetadata.METADATA_KEY_ART)
-        }
-        val duration = metadata?.getLong(android.media.MediaMetadata.METADATA_KEY_DURATION) ?: -1L
-
-        val displayTitle = if (!songTitle.isNullOrEmpty()) songTitle else "Đang phát trên $appName"
-        val displayArtist = if (!songArtist.isNullOrEmpty()) songArtist else appName
-
-        val newMetadataBuilder = MediaMetadataCompat.Builder()
-            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, displayTitle)
-            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, displayArtist)
-
-        if (albumArt != null) {
-            newMetadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, albumArt)
-        }
-        if (duration > 0) {
-            newMetadataBuilder.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, duration)
-        }
-
-        mediaSession.setMetadata(newMetadataBuilder.build())
-    }
-
-    // HÀM HIỂN THỊ MÀN HÌNH DONATE
-    private fun showDonateScreen() {
-        isShowingDonate = true // Bật lá chắn bảo vệ QR
-
-        val state = PlaybackStateCompat.Builder()
-            .setActions(PlaybackStateCompat.ACTION_PAUSE or PlaybackStateCompat.ACTION_STOP)
-            .setState(PlaybackStateCompat.STATE_PLAYING, 0, 1.0f)
-            .build()
-        mediaSession.setPlaybackState(state)
-
-        val qrBitmap = try {
-            BitmapFactory.decodeResource(resources, R.drawable.qr_donate)
-        } catch (e: Exception) { null }
-
-        val metadataBuilder = MediaMetadataCompat.Builder()
-            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, "☕ Cảm ơn bạn đã ủng hộ!")
-            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Màn hình sẽ tự đóng sau 15s")
-
-        if (qrBitmap != null) {
-            metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, qrBitmap)
-        }
-        mediaSession.setMetadata(metadataBuilder.build())
-
-        revertRunnable?.let { handler.removeCallbacks(it) }
-        revertRunnable = Runnable {
-            isShowingDonate = false // Tắt lá chắn sau 30s
-            forceSyncData() // Ép cập nhật lại nhạc đang phát
-        }
-        handler.postDelayed(revertRunnable!!, 15000)
-    }
-
-    private fun getInstalledAppInfo(packageName: String): String? {
-        return try {
-            val pm = packageManager
-            val info = pm.getApplicationInfo(packageName, 0)
-            pm.getApplicationLabel(info).toString()
-        } catch (e: PackageManager.NameNotFoundException) { null }
+    override fun onDestroy() {
+        super.onDestroy()
+        watchdogHandler.removeCallbacks(watchdogRunnable)
+        trackedController?.unregisterCallback(controllerCallback)
+        mediaSession.isActive = false
+        mediaSession.release()
     }
 
     override fun onGetRoot(clientPackageName: String, clientUid: Int, rootHints: Bundle?): BrowserRoot {
@@ -293,10 +203,9 @@ class SteeringWheelBridgeService : MediaBrowserServiceCompat() {
         val items = mutableListOf<MediaBrowserCompat.MediaItem>()
 
         if (parentId == "root_id") {
-            // 1. THƯ MỤC CHUYỂN ĐỔI MEDIA
             val switchFolder = MediaDescriptionCompat.Builder()
                 .setMediaId("folder_media_switch")
-                .setTitle("🔄 Trình phát đang mở")
+                .setTitle("Trình phát đang mở")
                 .setSubtitle("Chuyển quyền điều khiển sang app khác")
                 .build()
             items.add(MediaBrowserCompat.MediaItem(switchFolder, MediaBrowserCompat.MediaItem.FLAG_BROWSABLE))
@@ -310,12 +219,12 @@ class SteeringWheelBridgeService : MediaBrowserServiceCompat() {
 
             val donateItem = MediaDescriptionCompat.Builder()
                 .setMediaId("action_donate")
-                .setTitle("☕ Mời tôi ly Cafe (Donate)")
+                .setTitle("☕ Mời tôi ly Cafe")
+                .setSubtitle("Bấm vào đây để hiển thị mã QR!")
                 .build()
             items.add(MediaBrowserCompat.MediaItem(donateItem, MediaBrowserCompat.MediaItem.FLAG_PLAYABLE))
 
         } else if (parentId == "folder_media_switch") {
-            // 2. TÌM VÀ LIỆT KÊ CÁC APP ĐANG CÓ MEDIA SESSION
             try {
                 val mediaSessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
                 val component = ComponentName(this, MediaNotificationListener::class.java)
@@ -326,11 +235,8 @@ class SteeringWheelBridgeService : MediaBrowserServiceCompat() {
 
                 for (controller in controllers) {
                     val pkgName = controller.packageName
-                    // Chỉ liệt kê app nằm trong danh sách được phép
                     if (pkgName != packageName && allowedApps.contains(pkgName)) {
                         val appName = getInstalledAppInfo(pkgName) ?: pkgName
-
-                        // Đánh dấu xem app nào đang được chọn
                         val isCurrent = trackedController?.packageName == pkgName
                         val title = if (isCurrent) "✅ Đang điều khiển: $appName" else "▶️ Chuyển sang: $appName"
 
@@ -358,10 +264,77 @@ class SteeringWheelBridgeService : MediaBrowserServiceCompat() {
         result.sendResult(items)
     }
 
-    override fun onDestroy() {
-        handler.removeCallbacksAndMessages(null) // Dọn dẹp Nhịp tim và bộ đếm QR khi đóng app
-        trackedController?.unregisterCallback(controllerCallback)
-        mediaSession.release()
-        super.onDestroy()
+    private fun syncPlaybackState(targetState: PlaybackState?) {
+        if (targetState == null) return
+        val position = targetState.position
+        val speed = targetState.playbackSpeed
+        val compatState = when (targetState.state) {
+            PlaybackState.STATE_PLAYING -> {
+                mediaSession.isActive = true
+                PlaybackStateCompat.STATE_PLAYING
+            }
+            PlaybackState.STATE_PAUSED -> PlaybackStateCompat.STATE_PAUSED
+            else -> PlaybackStateCompat.STATE_PLAYING
+        }
+
+        val repeatIcon = when (myInternalRepeatMode) {
+            PlaybackStateCompat.REPEAT_MODE_ONE -> R.drawable.ic_repeat_one_on
+            PlaybackStateCompat.REPEAT_MODE_ALL -> R.drawable.ic_repeat_on
+            else -> R.drawable.ic_repeat
+        }
+
+        val repeatLabel = when (myInternalRepeatMode) {
+            PlaybackStateCompat.REPEAT_MODE_NONE -> "Đang tắt (Bấm để Lặp tất cả)"
+            PlaybackStateCompat.REPEAT_MODE_ALL -> "Đang lặp tất cả (Bấm để Lặp 1 bài)"
+            else -> "Đang lặp 1 bài (Bấm để Tắt)"
+        }
+
+        val playbackState = PlaybackStateCompat.Builder()
+            .setActions(
+                PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
+                        PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
+                        PlaybackStateCompat.ACTION_SEEK_TO or
+                        PlaybackStateCompat.ACTION_FAST_FORWARD or PlaybackStateCompat.ACTION_REWIND or
+                        PlaybackStateCompat.ACTION_SET_REPEAT_MODE
+            )
+            .addCustomAction("ACTION_REWIND_10", "Tua lùi 10s", R.drawable.ic_replay_10)
+            .addCustomAction("ACTION_FORWARD_10", "Tua đi 10s", R.drawable.ic_forward_10)
+            .addCustomAction("ACTION_TOGGLE_REPEAT", repeatLabel, repeatIcon)
+            .setState(compatState, position, speed)
+            .build()
+
+        mediaSession.setPlaybackState(playbackState)
+    }
+
+    private fun updateDisplayTitle(targetController: MediaController?) {
+        if (targetController == null) return
+        val metadata = targetController.metadata
+        val title = metadata?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE) ?: "Không rõ bài hát"
+        val artist = metadata?.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST) ?: "Không rõ nghệ sĩ"
+
+        val mediaMetadataCompat = android.support.v4.media.MediaMetadataCompat.fromMediaMetadata(metadata)
+        mediaSession.setMetadata(mediaMetadataCompat)
+        mediaSession.setMetadata(mediaMetadataCompat)
+    }
+
+    private fun sendMediaKey(keyCode: Int) {
+        try {
+            val eventDown = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
+            val eventUp = KeyEvent(KeyEvent.ACTION_UP, keyCode)
+            trackedController?.dispatchMediaButtonEvent(eventDown)
+            trackedController?.dispatchMediaButtonEvent(eventUp)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun getInstalledAppInfo(packageName: String): String? {
+        return try {
+            val pm = packageManager
+            val info = pm.getApplicationInfo(packageName, 0)
+            pm.getApplicationLabel(info).toString()
+        } catch (e: Exception) {
+            null
+        }
     }
 }
