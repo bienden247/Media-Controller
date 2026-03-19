@@ -6,19 +6,39 @@
     android:orientation="vertical"
     android:padding="24dp">
 
+
     <TextView
-        android:id="@+id/tvStatus"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Đang kiểm tra quyền..."
+        android:text="Để điều khiển trên xe, bạn cần cấp quyền Đọc thông báo."
         android:textAlignment="center"
-        android:textSize="18sp"
-        android:layout_marginBottom="24dp" />
+        android:layout_marginBottom="16dp" />
 
     <Button
         android:id="@+id/btnGrantPermission"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="CẤP QUYỀN TRUY CẬP"
+        android:layout_marginBottom="32dp"/>
+
+    <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Cấp Quyền Đọc Thông Báo" />
+        android:text="Chỉ cho phép Android Auto điều khiển những app bạn chọn: (Mặc định đã bật Youtube)"
+        android:textAlignment="center"
+        android:layout_marginBottom="16dp" />
 
-</LinearLayout>
+    <Button
+        android:id="@+id/btnSelectApps"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="CHỌN ỨNG DỤNG"
+        android:backgroundTint="#4CAF50"
+        android:layout_marginBottom="32dp"/>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Do các app Revanced có thể có tên gói khác nhau nên có thể sẽ không được bật mặc định bạn vui lòng vào danh sách bật thủ công nhé"
+        android:textAlignment="center"
+        android:layout_marginBottom="16dp" /> </LinearLayout>

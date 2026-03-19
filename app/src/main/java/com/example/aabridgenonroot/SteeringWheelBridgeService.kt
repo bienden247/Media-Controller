@@ -26,25 +26,6 @@ class SteeringWheelBridgeService : MediaBrowserServiceCompat() {
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var revertRunnable: Runnable? = null
 
-    // Blacklist App
-    private val ignoredPackages = listOf(
-        "com.spotify.music",
-        "com.google.android.apps.youtube.music",
-        "com.apple.android.music",
-        "com.soundcloud.android",
-        "com.aspiro.tidal",
-        "deezer.android.app",
-        "com.amazon.mp3",
-        "com.zing.mp3",
-        "com.nct.nhaccuatui",
-        "com.fonos",
-        "com.wefite.voiz",
-        "au.com.shiftyjelly.pocketcasts",
-        "com.audible.application",
-        "com.google.android.apps.podcasts",
-        "tunein.player",
-        "com.clearchannel.iheartradio.controller"
-    )
 
     // Theo dõi app
     private val controllerCallback = object : MediaController.Callback() {
@@ -102,9 +83,14 @@ class SteeringWheelBridgeService : MediaBrowserServiceCompat() {
         if (controllers == null) return
         var target: MediaController? = null
 
+        // 1. CHỈ MỞ BỘ NHỚ RA ĐỌC (Lấy danh sách các app đã được tích xanh)
+        val prefs = getSharedPreferences("AppConfig", Context.MODE_PRIVATE)
+        val allowedApps = prefs.getStringSet("allowed_apps", setOf()) ?: setOf()
+
+        // 2. Lọc ra App đang PLAYING và NẰM TRONG DANH SÁCH CHO PHÉP
         for (controller in controllers) {
             val pkgName = controller.packageName
-            if (pkgName != packageName && !ignoredPackages.contains(pkgName)) {
+            if (pkgName != packageName && allowedApps.contains(pkgName)) {
                 if (controller.playbackState?.state == PlaybackState.STATE_PLAYING) {
                     target = controller
                     break
@@ -112,10 +98,11 @@ class SteeringWheelBridgeService : MediaBrowserServiceCompat() {
             }
         }
 
+        // 3. Nếu không có app nào PLAYING, lấy app đang PAUSED
         if (target == null) {
             for (controller in controllers) {
                 val pkgName = controller.packageName
-                if (pkgName != packageName && !ignoredPackages.contains(pkgName)) {
+                if (pkgName != packageName && allowedApps.contains(pkgName)) {
                     target = controller
                     break
                 }
@@ -285,7 +272,7 @@ class SteeringWheelBridgeService : MediaBrowserServiceCompat() {
 
             val donateItem = MediaDescriptionCompat.Builder()
                 .setMediaId("action_donate")
-                .setTitle("☕ Mời Dev ly Cafe")
+                .setTitle("☕ Mời tôi ly Cafe")
                 .setSubtitle("Bấm vào đây để quét mã QR nhé!")
                 .build()
             items.add(MediaBrowserCompat.MediaItem(donateItem, MediaBrowserCompat.MediaItem.FLAG_PLAYABLE))
