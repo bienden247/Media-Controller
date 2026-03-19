@@ -31,7 +31,15 @@ class SteeringWheelBridgeService : MediaBrowserServiceCompat() {
     private val controllerCallback = object : MediaController.Callback() {
         override fun onPlaybackStateChanged(state: PlaybackState?) {
             super.onPlaybackStateChanged(state)
-            syncPlaybackState(state)
+
+            // CÚ HACK: Ép hệ thống quét lại toàn bộ các app đang mở ngay khi có sự cố đổi nhạc
+            val mediaSessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
+            val component = ComponentName(this@SteeringWheelBridgeService, MediaNotificationListener::class.java)
+            try {
+                findAndTrackActiveController(mediaSessionManager.getActiveSessions(component))
+            } catch (e: SecurityException) {
+                e.printStackTrace()
+            }
         }
 
         override fun onMetadataChanged(metadata: android.media.MediaMetadata?) {
@@ -83,11 +91,11 @@ class SteeringWheelBridgeService : MediaBrowserServiceCompat() {
         if (controllers == null) return
         var target: MediaController? = null
 
-        // 1. CHỈ MỞ BỘ NHỚ RA ĐỌC (Lấy danh sách các app đã được tích xanh)
+        // 1. Lấy danh sách app được phép
         val prefs = getSharedPreferences("AppConfig", Context.MODE_PRIVATE)
         val allowedApps = prefs.getStringSet("allowed_apps", setOf()) ?: setOf()
 
-        // 2. Lọc ra App đang PLAYING và NẰM TRONG DANH SÁCH CHO PHÉP
+        // 2. Cố gắng tìm App đang PLAYING
         for (controller in controllers) {
             val pkgName = controller.packageName
             if (pkgName != packageName && allowedApps.contains(pkgName)) {
@@ -98,7 +106,7 @@ class SteeringWheelBridgeService : MediaBrowserServiceCompat() {
             }
         }
 
-        // 3. Nếu không có app nào PLAYING, lấy app đang PAUSED
+        // 3. Nếu không có app nào PLAYING, tìm app đang PAUSED
         if (target == null) {
             for (controller in controllers) {
                 val pkgName = controller.packageName
@@ -109,15 +117,34 @@ class SteeringWheelBridgeService : MediaBrowserServiceCompat() {
             }
         }
 
+        // 4. XỬ LÝ KẾT QUẢ VÀ BÁO CÁO LÊN XE Ô TÔ
         if (target != null) {
+            // TÌM THẤY APP: Đồng bộ ngay lập tức
             if (trackedController?.packageName != target.packageName) {
                 trackedController?.unregisterCallback(controllerCallback)
                 trackedController = target
                 trackedController?.registerCallback(controllerCallback)
             }
-
             syncPlaybackState(target.playbackState)
             updateDisplayTitle(target)
+        } else {
+            // KHÔNG TÌM THẤY APP NÀO: Ném "Phao cứu sinh" lên xe để chống treo
+            trackedController?.unregisterCallback(controllerCallback)
+            trackedController = null
+
+            // Ép xe vào trạng thái Tạm dừng (PAUSE) thay vì để nó chờ đợi vô vọng
+            val pauseState = PlaybackStateCompat.Builder()
+                .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE)
+                .setState(PlaybackStateCompat.STATE_PAUSED, 0, 1.0f)
+                .build()
+            mediaSession.setPlaybackState(pauseState)
+
+            // Hiển thị chữ chờ trên màn hình Đang phát
+            val emptyMetadata = MediaMetadataCompat.Builder()
+                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, "Sẵn sàng")
+                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Vui lòng mở App")
+                .build()
+            mediaSession.setMetadata(emptyMetadata)
         }
     }
 
